@@ -177,6 +177,9 @@ static BOOL WINAPI init_driver(INIT_ONCE *once, void *param, void **context)
         load_devices_from_reg();
         load_driver_devices(eRender);
         load_driver_devices(eCapture);
+
+        /* XIV on Mac: Start notification thread for RescanDevices support */
+        start_notification_thread();
     }
 
     if (drvs.module == 0)

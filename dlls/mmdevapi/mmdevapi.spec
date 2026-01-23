@@ -19,3 +19,7 @@
 @ stdcall -private DllGetClassObject( ptr ptr ptr )
 @ stdcall -private DllRegisterServer()
 @ stdcall -private DllUnregisterServer()
+
+# XIV on Mac custom exports for dynamic audio device rescanning
+@ stdcall RescanAudioDevices()
+@ stdcall RescanAudioDevicesRundll(ptr ptr str long)

@@ -75,6 +75,13 @@ extern HRESULT SpatialAudioClient_Create(IMMDevice *device, ISpatialAudioClient 
 extern HRESULT load_devices_from_reg(void);
 extern HRESULT load_driver_devices(EDataFlow flow);
 
+/* XIV on Mac: Start notification thread for RescanDevices support */
+extern void start_notification_thread(void);
+
+/* XIV on Mac: Rescan audio devices to detect newly connected devices */
+extern HRESULT WINAPI RescanAudioDevices(void);
+extern void WINAPI RescanAudioDevicesRundll(HWND hwnd, HINSTANCE hinst, LPSTR lpszCmdLine, int nCmdShow);
+
 extern void main_loop_stop(void);
 
 extern const WCHAR drv_keyW[];

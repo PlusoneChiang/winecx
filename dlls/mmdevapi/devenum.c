@@ -1143,6 +1143,9 @@ struct NotificationClientWrapper {
 static struct list g_notif_clients = LIST_INIT(g_notif_clients);
 static HANDLE g_notif_thread;
 
+/* Forward declaration for notif_thread_proc */
+static DWORD WINAPI notif_thread_proc(void *user);
+
 static CRITICAL_SECTION g_notif_lock;
 static CRITICAL_SECTION_DEBUG g_notif_lock_debug =
 {
@@ -1151,6 +1154,22 @@ static CRITICAL_SECTION_DEBUG g_notif_lock_debug =
       0, 0, { (DWORD_PTR)(__FILE__ ": g_notif_lock") }
 };
 static CRITICAL_SECTION g_notif_lock = { &g_notif_lock_debug, -1, 0, 0, 0, 0 };
+
+/* XIV on Mac: Start notification thread for RescanDevices support */
+void start_notification_thread(void)
+{
+    EnterCriticalSection(&g_notif_lock);
+
+    if(!g_notif_thread){
+        g_notif_thread = CreateThread(NULL, 0, notif_thread_proc, NULL, 0, NULL);
+        if(!g_notif_thread)
+            ERR("CreateThread for notification thread failed: %lu\n", GetLastError());
+        else
+            TRACE("Started notification thread for RescanDevices support\n");
+    }
+
+    LeaveCriticalSection(&g_notif_lock);
+}
 
 static void notify_clients(EDataFlow flow, ERole role, const WCHAR *id)
 {
@@ -1232,6 +1251,8 @@ static DWORD WINAPI notif_thread_proc(void *user)
     WCHAR reg_key[256];
     WCHAR out_name[64], vout_name[64], in_name[64], vin_name[64];
     DWORD size;
+    /* XIV on Mac: RescanDevices toggle for hot-plug support */
+    DWORD rescan_toggle = 0, new_rescan_toggle = 0;
 
     SetThreadDescription(GetCurrentThread(), L"wine_mmdevapi_notification");
 
@@ -1261,6 +1282,10 @@ static DWORD WINAPI notif_thread_proc(void *user)
     if(RegQueryValueExW(key, L"DefaultVoiceInput", 0, NULL, (BYTE*)vin_name, &size) != ERROR_SUCCESS)
         vin_name[0] = 0;
 
+    /* XIV on Mac: Read initial RescanDevices toggle */
+    size = sizeof(rescan_toggle);
+    RegQueryValueExW(key, L"RescanDevices", 0, NULL, (BYTE*)&rescan_toggle, &size);
+
     while(1){
         if(RegNotifyChangeKeyValue(key, FALSE, REG_NOTIFY_CHANGE_LAST_SET,
                     NULL, FALSE) != ERROR_SUCCESS){
@@ -1280,6 +1305,26 @@ static DWORD WINAPI notif_thread_proc(void *user)
                 in_name, &MMDevice_def_rec->IMMDevice_iface);
         notify_if_changed(eCapture, eCommunications, key, L"DefaultVoiceInput",
                 vin_name, &MMDevice_def_rec->IMMDevice_iface);
+
+        /* XIV on Mac: Check if RescanDevices toggle changed - trigger device re-enumeration */
+        size = sizeof(new_rescan_toggle);
+        if(RegQueryValueExW(key, L"RescanDevices", 0, NULL, (BYTE*)&new_rescan_toggle, &size) == ERROR_SUCCESS
+           && new_rescan_toggle != rescan_toggle){
+            MMDevice *device;
+
+            TRACE("RescanDevices toggle changed: %lu -> %lu, re-enumerating\n", rescan_toggle, new_rescan_toggle);
+            rescan_toggle = new_rescan_toggle;
+
+            /* Mark all devices as not present */
+            LIST_FOR_EACH_ENTRY(device, &device_list, MMDevice, entry)
+            {
+                device->state = DEVICE_STATE_NOTPRESENT;
+            }
+
+            /* Re-enumerate devices from driver */
+            load_driver_devices(eRender);
+            load_driver_devices(eCapture);
+        }
 
         LeaveCriticalSection(&g_notif_lock);
     }
@@ -1968,4 +2013,50 @@ static HRESULT DeviceTopology_Create(IMMDevice *device, IDeviceTopology **ppv)
     *ppv = &This->IDeviceTopology_iface;
 
     return S_OK;
+}
+
+/***********************************************************************
+ *      RescanAudioDevices (MMDEVAPI.@)
+ *
+ * Rescan audio devices to detect newly connected devices.
+ * This function re-enumerates all audio devices from the driver,
+ * allowing detection of devices connected after the initial enumeration.
+ */
+HRESULT WINAPI RescanAudioDevices(void)
+{
+    MMDevice *device;
+
+    TRACE("Rescanning audio devices\n");
+
+    if (!drvs.module) {
+        WARN("No audio driver loaded\n");
+        return E_FAIL;
+    }
+
+    /* Mark all existing devices as not present */
+    LIST_FOR_EACH_ENTRY(device, &device_list, MMDevice, entry)
+    {
+        device->state = DEVICE_STATE_NOTPRESENT;
+    }
+
+    /* Re-enumerate devices from driver - this will update existing devices
+     * to DEVICE_STATE_ACTIVE and create new devices for newly connected hardware */
+    load_driver_devices(eRender);
+    load_driver_devices(eCapture);
+
+    TRACE("Rescan complete\n");
+
+    return S_OK;
+}
+
+/***********************************************************************
+ *      RescanAudioDevicesRundll (MMDEVAPI.@)
+ *
+ * rundll32-compatible wrapper for RescanAudioDevices.
+ * Usage: rundll32.exe mmdevapi.dll,RescanAudioDevicesRundll
+ */
+void WINAPI RescanAudioDevicesRundll(HWND hwnd, HINSTANCE hinst, LPSTR lpszCmdLine, int nCmdShow)
+{
+    TRACE("Called via rundll32\n");
+    RescanAudioDevices();
 }
