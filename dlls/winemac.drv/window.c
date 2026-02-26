@@ -1176,7 +1176,8 @@ static void macdrv_client_surface_update(struct client_surface *client)
     struct macdrv_client_surface *surface = impl_from_client_surface(client);
     HWND hwnd = client->hwnd, toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
     struct macdrv_win_data *data;
-    RECT rect;
+    RECT rect, effective_rect, desktop_rect, intersec_rect;
+    BOOL is_fullscreen;
 
     TRACE("%s\n", debugstr_client_surface(client));
 
@@ -1184,7 +1185,16 @@ static void macdrv_client_surface_update(struct client_surface *client)
     NtUserMapWindowPoints(hwnd, toplevel, (POINT *)&rect, 2, NtUserGetWinMonitorDpi(toplevel, MDT_RAW_DPI));
 
     if (!(data = get_win_data(toplevel))) return;
-    OffsetRect(&rect, data->rects.client.left - data->rects.visible.left, data->rects.client.top - data->rects.visible.top);
+
+    /* CX HACK 26660 */
+
+    NtUserGetClientRect(hwnd, &effective_rect, NtUserGetWinMonitorDpi(hwnd, MDT_EFFECTIVE_DPI));
+    NtUserGetClientRect(NtUserGetDesktopWindow(), &desktop_rect, NtUserGetWinMonitorDpi(hwnd, MDT_EFFECTIVE_DPI));
+    is_fullscreen = intersect_rect(&intersec_rect, &effective_rect, &desktop_rect) && EqualRect(&intersec_rect, &desktop_rect);
+    if (is_fullscreen)
+        rect = data->rects.client;
+    else
+        OffsetRect(&rect, data->rects.client.left - data->rects.visible.left, data->rects.client.top - data->rects.visible.top);
     macdrv_set_view_frame(surface->cocoa_view, cgrect_from_rect(rect));
     macdrv_set_view_superview(surface->cocoa_view, toplevel == hwnd ? NULL : data->client_view, data->cocoa_window, NULL, NULL);
     release_win_data(data);
