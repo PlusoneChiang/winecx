@@ -1419,6 +1419,12 @@ UINT macdrv_ImeProcessKey(HIMC himc, UINT wparam, UINT lparam, const BYTE *key_s
         return 0;
     }
 
+    /* Ctrl+key combinations are shortcuts (Ctrl+V paste, Ctrl+A select all,
+     * etc.), not IME input.  Return 0 so the keystroke passes through as a
+     * normal WM_KEYDOWN instead of being replaced with VK_PROCESSKEY. */
+    if (key_state[VK_CONTROL] & 0x80)
+        return 0;
+
     flags = thread_data->last_modifiers;
     if (key_state[VK_SHIFT] & 0x80)
         flags |= NX_SHIFTMASK;

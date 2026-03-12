@@ -378,6 +378,7 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 
     NSMutableAttributedString* markedText;
     NSRange markedTextSelection;
+    @public BOOL imeCallbackFired;
 
     int backingSize[2];
 
@@ -828,6 +829,7 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 
     - (void) insertText:(id)string replacementRange:(NSRange)replacementRange
     {
+        imeCallbackFired = YES;
         if ([string isKindOfClass:[NSAttributedString class]])
             string = [string string];
 
@@ -837,11 +839,13 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 
     - (void) doCommandBySelector:(SEL)aSelector
     {
+        imeCallbackFired = YES;
         [(WineWindow*)[self window] setCommandDone:TRUE];
     }
 
     - (void) setMarkedText:(id)string selectedRange:(NSRange)selectedRange replacementRange:(NSRange)replacementRange
     {
+        imeCallbackFired = YES;
         if ([string isKindOfClass:[NSAttributedString class]])
             string = [string string];
 
@@ -857,10 +861,17 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
             markedTextSelection = selectedRange;
             markedTextSelection.location += replacementRange.location;
 
+            /* Track when IME sets empty marked text (composition buffer cleared) */
+            BOOL preeditEmpty = ([markedText length] == 0);
+
             event = macdrv_create_event(IM_SET_TEXT, window);
             event->im_set_text.himc = [window himc];
             event->im_set_text.text = (CFStringRef)[[markedText string] copy];
-            event->im_set_text.complete = FALSE;
+            /* When preedit buffer is emptied (e.g. user backspaced all chars),
+               send complete=TRUE so Wine generates WM_IME_ENDCOMPOSITION.
+               Without this, the application stays in "composition mode" and
+               ignores subsequent WM_KEYDOWN for backspace/arrows. */
+            event->im_set_text.complete = preeditEmpty ? TRUE : FALSE;
             event->im_set_text.cursor_pos = markedTextSelection.location + markedTextSelection.length;
 
             [[window queue] postEvent:event];
@@ -926,9 +937,40 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 
         if ([window.queue query:query timeout:0.3 flags:WineQueryNoPreemptWait])
         {
-            aRange = NSMakeRange(query->ime_char_rect.range.location, query->ime_char_rect.range.length);
-            ret = NSRectFromCGRect(cgrect_mac_from_win(query->ime_char_rect.rect));
-            [[WineApplicationController sharedController] flipRect:&ret];
+            CGRect resultRect = query->ime_char_rect.rect;
+
+            if (resultRect.origin.x == 0 && resultRect.origin.y == 0 &&
+                resultRect.size.width == 0 && resultRect.size.height == 0)
+            {
+                /* Application didn't provide IME position info (no ImmSetCompositionWindow,
+                 * no Win32 caret). Fall back to a configurable position within the window.
+                 * WINE_IME_POS_X/Y: percentage (0-100) from left/top of window.
+                 * Default: 25% from left, 85% from top (bottom-left area). */
+                static int imePosX = -1, imePosY = -1;
+                static BOOL imePosLoaded = NO;
+
+                if (!imePosLoaded)
+                {
+                    const char *envX = getenv("WINE_IME_POS_X");
+                    const char *envY = getenv("WINE_IME_POS_Y");
+                    imePosX = envX ? atoi(envX) : 25;
+                    imePosY = envY ? atoi(envY) : 85;
+                    if (imePosX < 0 || imePosX > 100) imePosX = 25;
+                    if (imePosY < 0 || imePosY > 100) imePosY = 85;
+                    imePosLoaded = YES;
+                }
+
+                NSRect windowFrame = [window frame];
+                CGFloat x = windowFrame.origin.x + windowFrame.size.width * (imePosX / 100.0);
+                CGFloat y = windowFrame.origin.y + windowFrame.size.height * (1.0 - imePosY / 100.0);
+                ret = NSMakeRect(x, y, 0, 20);
+            }
+            else
+            {
+                aRange = NSMakeRange(query->ime_char_rect.range.location, query->ime_char_rect.range.length);
+                ret = NSRectFromCGRect(cgrect_mac_from_win(resultRect));
+                [[WineApplicationController sharedController] flipRect:&ret];
+            }
         }
         else
             ret = NSMakeRect(100, 100, aRange.length ? 1 : 0, 12);
@@ -4105,7 +4147,40 @@ void macdrv_send_text_input_event(int pressed, unsigned int flags, int repeat, i
             CFRelease(c);
 
             window.commandDone = FALSE;
-            ret = [[[window contentView] inputContext] handleEvent:event] && !window.commandDone;
+            ((WineContentView*)[window contentView])->imeCallbackFired = NO;
+            BOOL inputHandled = [[[window contentView] inputContext] handleEvent:event];
+            BOOL cbFired = ((WineContentView*)[window contentView])->imeCallbackFired;
+            ret = inputHandled && !window.commandDone;
+
+            /* CJK IME key-handling adjustments (key-down only).
+             *
+             * Key-up events never fire NSTextInputClient callbacks — this is
+             * normal macOS behavior.  All adjustments below only apply to
+             * key-down to avoid false triggers on key release.
+             *
+             * 1) Ctrl shortcut bypass — Ctrl+key (no Cmd) should reach Wine
+             *    as a keyboard shortcut, not be consumed by the CJK IME.
+             *
+             * 2) Swallowed key-down recovery — if inputContext reports
+             *    "handled" but no NSTextInputClient callback actually fired,
+             *    the key was silently swallowed (e.g. after IME switch mid-
+             *    composition).  Override to unhandled so Wine processes the
+             *    key normally. */
+            if (pressed)
+            {
+                if (ret && (localFlags & NX_CONTROLMASK)
+                    && !(localFlags & NX_COMMANDMASK) && !window.commandDone)
+                {
+                    ret = FALSE;
+                }
+
+                if (ret && !cbFired)
+                {
+                    ret = FALSE;
+                    if ([[window contentView] hasMarkedText])
+                        [[window contentView] clearMarkedText];
+                }
+            }
         }
         else
             ret = FALSE;

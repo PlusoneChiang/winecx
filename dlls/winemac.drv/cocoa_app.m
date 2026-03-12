@@ -586,6 +586,39 @@ static NSString* WineLocalizedString(unsigned int stringID)
             return;
         }
 
+        /* When IME switches during an active composition, cancel the composition
+           to prevent the application from being stuck in "waiting for IME result"
+           state.  Without this, backspace/arrow keys stop working after switching
+           IME mid-composition because Wine's IMM32 never receives
+           WM_IME_ENDCOMPOSITION. */
+        {
+            WineWindow* window = (WineWindow*)[NSApp keyWindow];
+            if (![window isKindOfClass:[WineWindow class]])
+                window = (WineWindow*)[NSApp mainWindow];
+            if ([window isKindOfClass:[WineWindow class]])
+            {
+                NSView* view = [window contentView];
+                if ([view respondsToSelector:@selector(hasMarkedText)]
+                    && [(id<NSTextInputClient>)view hasMarkedText])
+                {
+                    macdrv_event* event;
+
+                    /* Send empty IM_SET_TEXT with complete=TRUE to end the composition.
+                       This makes Wine send WM_IME_ENDCOMPOSITION to the application. */
+                    event = macdrv_create_event(IM_SET_TEXT, window);
+                    event->im_set_text.himc = [window himc];
+                    event->im_set_text.text = (CFStringRef)[@"" copy];
+                    event->im_set_text.complete = TRUE;
+
+                    [[window queue] postEvent:event];
+                    macdrv_release_event(event);
+
+                    if ([view respondsToSelector:@selector(clearMarkedText)])
+                        [view performSelector:@selector(clearMarkedText)];
+                }
+            }
+        }
+
         if (lastKeyboardInputSource)
             CFRelease(lastKeyboardInputSource);
         lastKeyboardInputSource = inputSource;

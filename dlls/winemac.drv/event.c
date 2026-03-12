@@ -178,8 +178,18 @@ static void macdrv_im_set_text(const macdrv_event *event)
         text[length] = 0;
     }
 
-    if (event->im_set_text.complete) post_ime_update(hwnd, -1, NULL, text);
-    else post_ime_update(hwnd, event->im_set_text.cursor_pos, text, NULL);
+    if (event->im_set_text.complete)
+    {
+        /* When completing with empty text (e.g. user backspaced all preedit
+           chars), pass NULL as result_str to avoid generating a spurious
+           WM_IME_COMPOSITION with GCS_RESULTSTR.  We still need
+           post_ime_update to trigger WM_IME_ENDCOMPOSITION via
+           ime_set_composition_status(FALSE). */
+        WCHAR *result = (text && text[0]) ? text : NULL;
+        post_ime_update(hwnd, -1, NULL, result);
+    }
+    else
+        post_ime_update(hwnd, event->im_set_text.cursor_pos, text, NULL);
 
     free(text);
 }
