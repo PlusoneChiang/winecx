@@ -845,7 +845,8 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 
     - (void) setMarkedText:(id)string selectedRange:(NSRange)selectedRange replacementRange:(NSRange)replacementRange
     {
-        imeCallbackFired = YES;
+        BOOL wasEmpty = ([markedText length] == 0);
+
         if ([string isKindOfClass:[NSAttributedString class]])
             string = [string string];
 
@@ -861,16 +862,18 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
             markedTextSelection = selectedRange;
             markedTextSelection.location += replacementRange.location;
 
-            /* Track when IME sets empty marked text (composition buffer cleared) */
             BOOL preeditEmpty = ([markedText length] == 0);
+
+            /* Only count as meaningful IME activity when preedit content
+               actually changed.  empty → empty is a no-op (e.g. arrow key
+               after Enter commit) — the key should pass through to Wine. */
+            imeCallbackFired = !(wasEmpty && preeditEmpty);
 
             event = macdrv_create_event(IM_SET_TEXT, window);
             event->im_set_text.himc = [window himc];
             event->im_set_text.text = (CFStringRef)[[markedText string] copy];
             /* When preedit buffer is emptied (e.g. user backspaced all chars),
-               send complete=TRUE so Wine generates WM_IME_ENDCOMPOSITION.
-               Without this, the application stays in "composition mode" and
-               ignores subsequent WM_KEYDOWN for backspace/arrows. */
+               send complete=TRUE so Wine generates WM_IME_ENDCOMPOSITION. */
             event->im_set_text.complete = preeditEmpty ? TRUE : FALSE;
             event->im_set_text.cursor_pos = markedTextSelection.location + markedTextSelection.length;
 
@@ -939,27 +942,28 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         {
             CGRect resultRect = query->ime_char_rect.rect;
 
-            if (resultRect.origin.x == 0 && resultRect.origin.y == 0 &&
-                resultRect.size.width == 0 && resultRect.size.height == 0)
+            /* Check if user configured custom IME position via env vars.
+             * Only override when WINE_IME_POS_X/Y are explicitly set AND
+             * the application didn't provide position info (all zeros). */
+            static int imePosX = -1, imePosY = -1;
+            static BOOL imePosLoaded = NO;
+
+            if (!imePosLoaded)
             {
-                /* Application didn't provide IME position info (no ImmSetCompositionWindow,
-                 * no Win32 caret). Fall back to a configurable position within the window.
-                 * WINE_IME_POS_X/Y: percentage (0-100) from left/top of window.
-                 * Default: 25% from left, 85% from top (bottom-left area). */
-                static int imePosX = -1, imePosY = -1;
-                static BOOL imePosLoaded = NO;
+                const char *envX = getenv("WINE_IME_POS_X");
+                const char *envY = getenv("WINE_IME_POS_Y");
+                imePosX = envX ? atoi(envX) : -1;
+                imePosY = envY ? atoi(envY) : -1;
+                if (imePosX < 0 || imePosX > 100) imePosX = -1;
+                if (imePosY < 0 || imePosY > 100) imePosY = -1;
+                imePosLoaded = YES;
+            }
 
-                if (!imePosLoaded)
-                {
-                    const char *envX = getenv("WINE_IME_POS_X");
-                    const char *envY = getenv("WINE_IME_POS_Y");
-                    imePosX = envX ? atoi(envX) : 25;
-                    imePosY = envY ? atoi(envY) : 85;
-                    if (imePosX < 0 || imePosX > 100) imePosX = 25;
-                    if (imePosY < 0 || imePosY > 100) imePosY = 85;
-                    imePosLoaded = YES;
-                }
+            BOOL appProvidedPos = !(resultRect.origin.x == 0 && resultRect.origin.y == 0 &&
+                                    resultRect.size.width == 0 && resultRect.size.height == 0);
 
+            if (!appProvidedPos && imePosX >= 0 && imePosY >= 0)
+            {
                 NSRect windowFrame = [window frame];
                 CGFloat x = windowFrame.origin.x + windowFrame.size.width * (imePosX / 100.0);
                 CGFloat y = windowFrame.origin.y + windowFrame.size.height * (1.0 - imePosY / 100.0);
