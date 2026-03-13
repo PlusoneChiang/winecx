@@ -1456,6 +1456,10 @@ UINT macdrv_ImeProcessKey(HIMC himc, UINT wparam, UINT lparam, const BYTE *key_s
         case VK_RETURN:
         case VK_ESCAPE:
         case VK_BACK:
+        case VK_LEFT:
+        case VK_RIGHT:
+        case VK_UP:
+        case VK_DOWN:
             preprocess = 1;
     }
 
