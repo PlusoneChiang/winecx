@@ -4167,9 +4167,14 @@ void macdrv_send_text_input_event(int pressed, unsigned int flags, int repeat, i
              *
              * 2) Swallowed key-down recovery — if inputContext reports
              *    "handled" but no NSTextInputClient callback actually fired,
-             *    the key was silently swallowed (e.g. after IME switch mid-
-             *    composition).  Override to unhandled so Wine processes the
-             *    key normally. */
+             *    the key may have been silently swallowed (e.g. after IME
+             *    switch mid-composition).  However, when there is active
+             *    marked text (composition in progress), the IME may legitimately
+             *    handle keys without firing any callback — for example, pressing
+             *    space to page through the candidate window.  In that case we
+             *    must keep ret=TRUE so the key is not forwarded to Wine.
+             *    Only override to unhandled when there is no active composition,
+             *    which indicates a stale swallow after an IME state transition. */
             if (pressed)
             {
                 if (ret && (localFlags & NX_CONTROLMASK)
@@ -4178,11 +4183,9 @@ void macdrv_send_text_input_event(int pressed, unsigned int flags, int repeat, i
                     ret = FALSE;
                 }
 
-                if (ret && !cbFired)
+                if (ret && !cbFired && ![[window contentView] hasMarkedText])
                 {
                     ret = FALSE;
-                    if ([[window contentView] hasMarkedText])
-                        [[window contentView] clearMarkedText];
                 }
             }
         }
