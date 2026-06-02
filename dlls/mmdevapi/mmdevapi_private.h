@@ -86,6 +86,9 @@ struct audio_client {
 
 extern HRESULT MMDevEnum_Create(REFIID riid, void **ppv);
 extern void MMDevEnum_Free(void);
+extern void start_notification_thread(void);
+extern HRESULT WINAPI RescanAudioDevices(void);
+extern void WINAPI RescanAudioDevicesRundll(HWND hwnd, HINSTANCE hinst, LPWSTR cmdline, int nCmdShow);
 
 typedef struct _DriverFuncs {
     HMODULE module;
