@@ -579,7 +579,6 @@ static bool amt_from_wg_format_video(AM_MEDIA_TYPE *mt, const struct wg_format *
         mt->bFixedSizeSamples = TRUE;
     else
         mt->bTemporalCompression = TRUE;
-    mt->lSampleSize = 1;
     mt->formattype = FORMAT_VideoInfo;
     mt->cbFormat = sizeof(VIDEOINFOHEADER);
     mt->pbFormat = (BYTE *)video_format;
@@ -602,6 +601,7 @@ static bool amt_from_wg_format_video(AM_MEDIA_TYPE *mt, const struct wg_format *
     video_format->bmiHeader.biBitCount = wg_video_format_get_depth(format->u.video.format);
     video_format->bmiHeader.biCompression = wg_video_format_get_compression(format->u.video.format);
     video_format->bmiHeader.biSizeImage = wg_format_get_max_size(format);
+    mt->lSampleSize = wm ? video_format->bmiHeader.biSizeImage : 1;
 
     if (format->u.video.format == WG_VIDEO_FORMAT_RGB16)
     {
