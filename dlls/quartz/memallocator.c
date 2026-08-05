@@ -832,31 +832,31 @@ static HRESULT StdMemAllocator_Alloc(IMemAllocator * iface)
 {
     StdMemAllocator *This = StdMemAllocator_from_IMemAllocator(iface);
     StdMediaSample2 * pSample = NULL;
-    SYSTEM_INFO si;
+    SIZE_T alignment = This->base.props.cbAlign;
+    SIZE_T stride, allocation_size;
+    BYTE *first_buffer;
     LONG i;
 
     assert(list_empty(&This->base.free_list));
 
-    /* check alignment */
-    GetSystemInfo(&si);
-
-    /* we do not allow a courser alignment than the OS page size */
-    if ((si.dwPageSize % This->base.props.cbAlign) != 0)
-        return VFW_E_BADALIGN;
-
-    /* FIXME: each sample has to have its buffer start on the right alignment.
-     * We don't do this at the moment */
+    stride = This->base.props.cbBuffer + This->base.props.cbPrefix;
+    if (stride % alignment)
+        stride += alignment - stride % alignment;
+    allocation_size = stride * This->base.props.cBuffers + alignment - 1;
 
     /* allocate memory */
-    This->pMemory = VirtualAlloc(NULL, (This->base.props.cbBuffer + This->base.props.cbPrefix) * This->base.props.cBuffers, MEM_COMMIT, PAGE_READWRITE);
+    This->pMemory = VirtualAlloc(NULL, allocation_size, MEM_COMMIT, PAGE_READWRITE);
 
     if (!This->pMemory)
         return E_OUTOFMEMORY;
 
+    first_buffer = (BYTE *)This->pMemory + This->base.props.cbPrefix;
+    if ((ULONG_PTR)first_buffer % alignment)
+        first_buffer += alignment - (ULONG_PTR)first_buffer % alignment;
+
     for (i = This->base.props.cBuffers - 1; i >= 0; i--)
     {
-        /* pbBuffer does not start at the base address, it starts at base + cbPrefix */
-        BYTE * pbBuffer = (BYTE *)This->pMemory + i * (This->base.props.cbBuffer + This->base.props.cbPrefix) + This->base.props.cbPrefix;
+        BYTE *pbBuffer = first_buffer + i * stride;
         
         StdMediaSample2_Construct(pbBuffer, This->base.props.cbBuffer, iface, &pSample);
 

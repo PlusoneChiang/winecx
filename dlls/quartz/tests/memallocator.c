@@ -171,6 +171,36 @@ static void test_commit(void)
     IMemAllocator_Release(allocator);
 }
 
+static void test_alignment(void)
+{
+    ALLOCATOR_PROPERTIES req_props = {2, 529200, 12, 0}, ret_props;
+    IMemAllocator *allocator = create_allocator();
+    IMediaSample *samples[2];
+    BYTE *data;
+    HRESULT hr;
+    unsigned int i;
+
+    hr = IMemAllocator_SetProperties(allocator, &req_props, &ret_props);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IMemAllocator_Commit(allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    for (i = 0; i < ARRAY_SIZE(samples); ++i)
+    {
+        hr = IMemAllocator_GetBuffer(allocator, &samples[i], NULL, NULL, 0);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        hr = IMediaSample_GetPointer(samples[i], &data);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ok(!((ULONG_PTR)data % req_props.cbAlign), "Buffer %u is not %ld-byte aligned.\n",
+                i, req_props.cbAlign);
+    }
+
+    for (i = 0; i < ARRAY_SIZE(samples); ++i)
+        IMediaSample_Release(samples[i]);
+    IMemAllocator_Decommit(allocator);
+    IMemAllocator_Release(allocator);
+}
+
 static void test_sample_time(void)
 {
     ALLOCATOR_PROPERTIES req_props = {1, 65536, 1, 0}, ret_props;
@@ -656,6 +686,7 @@ START_TEST(memallocator)
 
     test_properties();
     test_commit();
+    test_alignment();
     test_sample_time();
     test_media_time();
     test_sample_properties();

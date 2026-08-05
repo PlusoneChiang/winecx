@@ -288,8 +288,10 @@ static ULONG WINAPI buffer_Release(INSSBuffer *iface)
 
 static HRESULT WINAPI buffer_GetLength(INSSBuffer *iface, DWORD *size)
 {
-    FIXME("iface %p, size %p, stub!\n", iface, size);
-    return E_NOTIMPL;
+    struct buffer *buffer = impl_from_INSSBuffer(iface);
+
+    *size = buffer->size;
+    return S_OK;
 }
 
 static HRESULT WINAPI buffer_SetLength(INSSBuffer *iface, DWORD size)
