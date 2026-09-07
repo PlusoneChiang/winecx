@@ -1251,8 +1251,6 @@ struct NotificationClientWrapper {
 
 static struct list g_notif_clients = LIST_INIT(g_notif_clients);
 static HANDLE g_notif_thread;
-static BOOL g_notif_started;
-static DWORD WINAPI notif_thread_proc(void *user);
 
 static CRITICAL_SECTION g_notif_lock;
 static CRITICAL_SECTION_DEBUG g_notif_lock_debug =
@@ -1262,20 +1260,6 @@ static CRITICAL_SECTION_DEBUG g_notif_lock_debug =
       0, 0, { (DWORD_PTR)(__FILE__ ": g_notif_lock") }
 };
 static CRITICAL_SECTION g_notif_lock = { &g_notif_lock_debug, -1, 0, 0, 0, 0 };
-
-void start_notification_thread(void)
-{
-    EnterCriticalSection(&g_notif_lock);
-
-    if (!g_notif_thread)
-    {
-        g_notif_thread = CreateThread(NULL, 0, notif_thread_proc, NULL, 0, NULL);
-        if (!g_notif_thread)
-            ERR("CreateThread failed: %lu\n", GetLastError());
-    }
-
-    LeaveCriticalSection(&g_notif_lock);
-}
 
 static void notify_clients(EDataFlow flow, ERole role, const WCHAR *id)
 {
@@ -1353,14 +1337,9 @@ static BOOL notify_if_changed(EDataFlow flow, ERole role, HKEY key,
 
 static DWORD WINAPI notif_thread_proc(void *user)
 {
-    static const WCHAR value_name[] = L"RescanDevices";
     HKEY key;
     WCHAR reg_key[256];
     WCHAR out_name[64], vout_name[64], in_name[64], vin_name[64];
-    DWORD notif_filter = REG_NOTIFY_CHANGE_LAST_SET;
-    DWORD rescan_registry_value = 0;
-    DWORD last_rescan_registry_value = 0;
-    DWORD value_size = sizeof(rescan_registry_value);
     DWORD size;
 
     SetThreadDescription(GetCurrentThread(), L"wine_mmdevapi_notification");
@@ -1392,33 +1371,12 @@ static DWORD WINAPI notif_thread_proc(void *user)
         vin_name[0] = 0;
 
     while(1){
-        if(RegNotifyChangeKeyValue(key, FALSE, notif_filter,
+        if(RegNotifyChangeKeyValue(key, FALSE, REG_NOTIFY_CHANGE_LAST_SET,
                     NULL, FALSE) != ERROR_SUCCESS){
             ERR("RegNotifyChangeKeyValue failed: %lu\n", GetLastError());
             RegCloseKey(key);
             g_notif_thread = NULL;
             return 1;
-        }
-
-        value_size = sizeof(rescan_registry_value);
-        if (RegQueryValueExW(key, value_name, 0, NULL, (BYTE*)&rescan_registry_value, &value_size) == ERROR_SUCCESS)
-        {
-            if (!g_notif_started)
-            {
-                last_rescan_registry_value = rescan_registry_value;
-                g_notif_started = TRUE;
-            }
-            else if (rescan_registry_value != last_rescan_registry_value)
-            {
-                MMDevEnum_Free();
-                load_devices_from_reg();
-                if (drvs.module)
-                {
-                    load_driver_devices(eRender);
-                    load_driver_devices(eCapture);
-                }
-                last_rescan_registry_value = rescan_registry_value;
-            }
         }
 
         EnterCriticalSection(&g_notif_lock);
@@ -1461,30 +1419,16 @@ static HRESULT WINAPI MMDevEnum_RegisterEndpointNotificationCallback(IMMDeviceEn
     EnterCriticalSection(&g_notif_lock);
 
     list_add_tail(&g_notif_clients, &wrapper->entry);
+
+    if(!g_notif_thread){
+        g_notif_thread = CreateThread(NULL, 0, notif_thread_proc, NULL, 0, NULL);
+        if(!g_notif_thread)
+            ERR("CreateThread failed: %lu\n", GetLastError());
+    }
+
     LeaveCriticalSection(&g_notif_lock);
 
     return S_OK;
-}
-
-HRESULT WINAPI RescanAudioDevices(void)
-{
-    MMDevEnum_Free();
-
-    load_devices_from_reg();
-
-    if (drvs.module)
-    {
-        load_driver_devices(eRender);
-        load_driver_devices(eCapture);
-    }
-
-    return S_OK;
-}
-
-void WINAPI RescanAudioDevicesRundll(HWND hwnd, HINSTANCE hinst, LPWSTR cmdline, int nCmdShow)
-{
-    TRACE("RescanAudioDevicesRundll\n");
-    RescanAudioDevices();
 }
 
 static HRESULT WINAPI MMDevEnum_UnregisterEndpointNotificationCallback(IMMDeviceEnumerator *iface, IMMNotificationClient *client)

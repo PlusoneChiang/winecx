@@ -27,5 +27,3 @@
 @ stdcall -private auxMessage(long long long long long)
 @ stdcall -private midMessage(long long long long long)
 @ stdcall -private modMessage(long long long long long)
-18 stdcall RescanAudioDevices()
-19 stdcall RescanAudioDevicesRundll(long long str long long)
