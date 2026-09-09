@@ -1176,8 +1176,7 @@ static void macdrv_client_surface_update(struct client_surface *client)
     struct macdrv_client_surface *surface = impl_from_client_surface(client);
     HWND hwnd = client->hwnd, toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
     struct macdrv_win_data *data;
-    RECT rect, effective_rect, desktop_rect, intersec_rect;
-    BOOL is_fullscreen;
+    RECT rect;
 
     TRACE("%s\n", debugstr_client_surface(client));
 
@@ -1186,13 +1185,13 @@ static void macdrv_client_surface_update(struct client_surface *client)
 
     if (!(data = get_win_data(toplevel))) return;
 
-    /* CX HACK 26660 */
-
-    NtUserGetClientRect(hwnd, &effective_rect, NtUserGetWinMonitorDpi(hwnd, MDT_EFFECTIVE_DPI));
-    NtUserGetClientRect(NtUserGetDesktopWindow(), &desktop_rect, NtUserGetWinMonitorDpi(hwnd, MDT_EFFECTIVE_DPI));
-    is_fullscreen = intersect_rect(&intersec_rect, &effective_rect, &desktop_rect) && EqualRect(&intersec_rect, &desktop_rect);
-    if (is_fullscreen)
+    /* CX HACK 26660: Use the exact client rect for fullscreen windows to avoid
+     * DPI rounding borders, but keep the view frame relative to the visible rect. */
+    if (hwnd == toplevel && data->fullscreen)
+    {
         rect = data->rects.client;
+        OffsetRect(&rect, -data->rects.visible.left, -data->rects.visible.top);
+    }
     else
         OffsetRect(&rect, data->rects.client.left - data->rects.visible.left, data->rects.client.top - data->rects.visible.top);
     macdrv_set_view_frame(surface->cocoa_view, cgrect_from_rect(rect));
