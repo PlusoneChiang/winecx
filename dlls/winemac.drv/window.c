@@ -1713,8 +1713,15 @@ void macdrv_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UINT
 
     if (fullscreen || fullscreen != data->fullscreen)
     {
-        CGRect rect = (fullscreen && !EqualRect(&data->rects.window, &data->rects.visible)) ? cgrect_from_rect(data->rects.window) : CGRectZero;
-        macdrv_set_window_mask(data->cocoa_window, rect);
+        RECT mask_rect = {0};
+
+        if (fullscreen && !EqualRect(&data->rects.window, &data->rects.visible))
+        {
+            mask_rect = data->rects.window;
+            /* The mask uses content-view coordinates, not desktop coordinates. */
+            OffsetRect(&mask_rect, -data->rects.visible.left, -data->rects.visible.top);
+        }
+        macdrv_set_window_mask(data->cocoa_window, cgrect_from_rect(mask_rect));
         data->fullscreen = fullscreen;
     }
 
